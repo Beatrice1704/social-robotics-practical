@@ -7,7 +7,7 @@ from utils.prompts import build_director_prompt
 from utils.prompts import build_matcher_prompt
 
 
-GEMINI_API_KEY = "INSERT_YOUR_KEY_HERE"
+GEMINI_API_KEY = "INSERT YOUR KEY HERE"
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def gemini_generate_text(prompt: str, model: str = "gemini-2.5-flash") -> str:
