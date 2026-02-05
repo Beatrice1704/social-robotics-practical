@@ -1,3 +1,18 @@
+# Assignment suggests fixed utterances for instructions and ending rounds 
+UTT_WELCOME = "Hi! Let's play With Other Words. We'll take turns: I explain, then I guess."
+UTT_RULES = "When I explain, try to guess the word. You can ask short questions."
+UTT_YOUR_TURN_DESCRIBE = "Now it's your turn. Think of a word and describe it, without saying it."
+UTT_ROUND_OVER = "Time is up for this round."
+UTT_PLAY_AGAIN = "Do you want to play another round? Say yes or no."
+UTT_GOODBYE = "Okay! Thanks for playing. Bye!"
+
+# Simple confirmation utterances
+UTT_DIDNT_CATCH = "Sorry, I didn't catch that. Please say it again."
+UTT_CORRECT = "Yes! Correct!"
+UTT_NOT_CORRECT = "Not yet. Try again."
+
+
+
 CONTEXT_BLOCK = """Context:
 You are a conversational assistant embedded in a small social robot.
 The robot is playing a spoken word-guessing game with a human user.
@@ -40,16 +55,27 @@ def build_matcher_prompt(user_description: str) -> str:
     return CONTEXT_BLOCK + "\n" + MATCHER_INSTRUCTIONS_BLOCK + "\nHuman description:\n" + user_description
 
 
+def build_director_answer_prompt(secret: str, clue: str, question: str) -> str:
+    """
+    Gemini answers the user's question without revealing the secret.
+    """
+    return f"""Context:
+        You are a conversational assistant embedded in a small social robot playing a word-guessing game.
 
-# Assignment suggests fixed utterances for instructions and ending rounds 
-UTT_WELCOME = "Hi! Let's play With Other Words. We'll take turns: I explain, then I guess."
-UTT_RULES = "When I explain, try to guess the word. You can ask short questions."
-UTT_YOUR_TURN_DESCRIBE = "Now it's your turn. Think of a word and describe it, without saying it."
-UTT_ROUND_OVER = "Time is up for this round."
-UTT_PLAY_AGAIN = "Do you want to play another round? Say yes or no."
-UTT_GOODBYE = "Okay! Thanks for playing. Bye!"
+        Instructions:
+        You are the DIRECTOR. The secret word is: {secret}
+        You must NOT reveal the secret word.
+        The user asked a question about the word. Answer briefly (max 1 sentence).
+        You may give a helpful hint, but do not say the secret word.
 
-# Simple confirmation utterances
-UTT_DIDNT_CATCH = "Sorry, I didn't catch that. Please say it again."
-UTT_CORRECT = "Yes! Correct!"
-UTT_NOT_CORRECT = "Not yet. Try again."
+        Additional information:
+        - Keep it natural for spoken dialogue.
+        - Do not repeat the secret word.
+        - If the user asks something that would reveal the word, respond with a generic hint instead.
+
+        Clue already given: {clue}
+        User question: {question}
+        Output exactly:
+        ANSWER: <one short sentence>
+        """
+
