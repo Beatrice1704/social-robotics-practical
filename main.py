@@ -1,104 +1,155 @@
-from autobahn.twisted.component import Component, run 
-from twisted.internet.defer import inlineCallbacks 
-from autobahn.twisted.util import sleep  
+from autobahn.twisted.component import Component, run
+from twisted.internet.defer import inlineCallbacks
+from autobahn.twisted.util import sleep
 from google import genai
+from google.genai import types
+import os
+import re
 
-from utils.parsing import *
-from utils.prompts import *
+# This demo is a very straightforward implementation of a text-based chatbot using google's
+# generative AI, Gemini
+# To use Gemini, you need to acquire a (free) key that you submit to your system environment.
+# Learn more at https://ai.google.dev/gemini-api
 
+# Setting the API KEY
+#chatbot = genai.Client(api_key=os.environ["api"])
 
-GEMINI_API_KEY = "INSERT YOUR KEY HERE"
-client = genai.Client(api_key=GEMINI_API_KEY)
+# GLOBAL VARIABLES
 
+ROUND_DURATION_S = 60.0
+MAX_MEMORY_TURNS = 8
+
+# GEMINI SETUP
+
+chatbot = genai.Client(api_key="api")
 
 def gemini_generate_text(prompt: str, model: str = "gemini-2.5-flash") -> str:
-    resp = client.models.generate_content(
-        model=model,
-        contents=prompt
-    )
+    resp = chatbot.models.generate_content(model=model, contents=prompt)
     return (resp.text or "").strip()
 
 
+exit_conditions = (":q", "quit", "exit")
+
+finish_dialogue = False
+query = "hello"
+response = "qqq"
+
+def asr(frames):
+    global finish_dialogue
+    global query, robot_is_speaking
+
+    if robot_is_speaking:
+        return
+    if frames["data"]["body"]["final"]:
+        query = str(frames["data"]["body"]["text"]).strip()
+        print("ASR response: ",query)
+        finish_dialogue = True
+
 @inlineCallbacks
-def say(session, stt, text):
+def say(session, text: str, cooldown_s: float = 0.8):
     """
-    Robot speaks safely:
-    - disable STT (so it doesn't hear itself) (! not implemented)
-    - speak using TTS 
-    - small pause after speaking (! not implemented)
+    For speaking safely:
+    - block ASR while speaking to reduce self-speech pickup
+    - cooldown to avoid capturing speech tail
     """
-    yield stt.before_robot_speaks(text)
+    global robot_is_speaking
+    robot_is_speaking = True
     yield session.call("rie.dialogue.say", text=text)
-    yield stt.after_robot_speaks()
+    yield sleep(cooldown_s)
+    robot_is_speaking = False
 
+def build_controller_prompt(role: str, memory: list[str], user_text: str) -> str:
+    """
+    One prompt that controls the game turn.
+    LLM decides what to do (ask question, make guess, give clue, confirm correct).
+    CODE handles timeout and role switching.
+    """
+    mem = "\n".join(memory[-MAX_MEMORY_TURNS:]) if memory else "(none yet)"
+    return f"""Context:
+    You are a conversational assistant embedded in a small social robot.
+    You are playing the WOW (With Other Words) spoken word game.
+
+    Role:
+    {role}
+
+    Rules:
+    - DIRECTOR: You secretly choose one common English word (single word). Do NOT reveal it.
+    Give short hints (1 sentence). If the user asks questions, answer briefly without revealing.
+    If the user guesses correctly, respond with a short success message.
+    - MATCHER: The user has a secret word and describes it. Ask ONE short clarification question if unsure,
+    otherwise make ONE guess. Keep it brief for speech.
+
+    Conversation so far:
+    {mem}
+
+    Latest user utterance:
+    {user_text}
+
+    Output format (MUST follow exactly):
+    SAY: <one short sentence to speak aloud>
+    """
+
+def parse_say(text: str) -> str:
+    """
+    Extract the SAY line.
+    """
+    m = re.search(r"SAY:\s*(.+)", text)
+    return m.group(1).strip() if m else text.strip()
 
 @inlineCallbacks
-def director_round(session, stt):
-    # welcome
-    yield say(session, stt, UTT_WELCOME)
-    # fixed instruction
-    yield say(session, stt, UTT_RULES)
+def main(session, details):
+    global finish_dialogue, query, response
+    # set language to English (use 'nl' for Dutch)
+    yield session.call("rie.dialogue.config.language", lang="en")
+    # let the robot stand up
+    yield session.call("rom.optional.behavior.play",name="BlocklyStand")
 
-    # Gemini
-    raw = gemini_generate_text(build_director_prompt())
-    secret, clue = parse_director(raw)
+    # prompt from the robot to the user to say something
+    yield say(session, "Hi! Let's play With Other Words.")
+    yield say(session, "Each round lasts one minute. We take turns: I explain, then I guess.")
 
-    if not secret or not clue:
-        yield say(session, stt, "I had trouble choosing a word.")
-        return
+    # setting up the automatic speech recognition
+    # subscribes the asr function with the input stt stream
+    yield session.subscribe(asr, "rie.dialogue.stt.stream")
+    # calls the stream. From here, the robot prints each 'final' sentence
+    yield session.call("rie.dialogue.stt.stream")
 
-    # speak clue
-    yield say(session, stt, clue)
+    # loop while user did not say exit or quit
+    dialogue = True
+    while dialogue:
+        if (finish_dialogue):
+            if query in exit_conditions:
+                dialogue = False
+                yield session.call("rie.dialogue.say","ok, I will leave you then")
+                break
+            elif (query != ""):
+                response = chatbot.models.generate_content(
+                    model="gemini-2.5-flash", contents=query)
+                yield session.call("rie.dialogue.say", response.text)
+            else:
+                yield session.call("rie.dialogue.say", text="sorry, what did you say?")
+            finish_dialogue = False
+            query = ""
 
-    # listen (! not implemented)
-    user_text = yield stt.listen(timeout_s=8.0)
+    # before leaving the program, we need to close the STT stream
+    yield session.call("rie.dialogue.stt.close")
+    # and let the robot crouch
+    # THIS IS IMPORTANT, as this will turn of the robot's motors and prevent them from overheating
+    # Always and your program with this
+    yield session.call("rom.optional.behavior.play",name="BlocklyCrouch")
+    session.leave()
 
-    if not user_text:
-        yield say(session, stt, UTT_DIDNT_CATCH)
-        return
+wamp = Component(
+    transports=[{
+        "url": "ws://wamp.robotsindeklas.nl",
+        "serializers": ["msgpack"],
+        "max_retries": 0
+    }],
+    realm="rie.69846cbd8e17491bb13c9abb",
+)
 
-    # question vs guess
-    if is_question(user_text):
-        # Ask Gemini to answer without revealing the secret
-        q_prompt = build_director_answer_prompt(secret=secret, clue=clue, question=user_text)
-        a_raw = gemini_generate_text(q_prompt)
+wamp.on_join(main)
 
-        m = re.search(r"ANSWER:\s*(.+)", a_raw)
-        answer = m.group(1).strip()
+if __name__ == "__main__":
+    run([wamp])
 
-        # Speak the answer
-        yield say(session, stt, answer)
-
-        return
-
-    # Otherwise treat as a guess
-    if user_text.lower().strip() == secret.lower():
-        yield say(session, stt, UTT_CORRECT)
-    else:
-        yield say(session, stt, UTT_NOT_CORRECT)
-
-
-@inlineCallbacks  
-def main(session, details):  
-    #yield session.call("rie.dialogue.say",  
-    #text="Hello, I am successfully connected!")  
-    #session.leave() # Close the connection with the robot  
-
-# Create wamp connection  
-#wamp = Component(  
-    transports=[{  
-        "url": "ws://wamp.robotsindeklas.nl",  
-        "serializers": ["msgpack"]  
-    }],  
-    realm="ENTER YOUR REALM HERE",  
-#)  
-#wamp.on_join(main)  
-
-if __name__ == "__main__":  
-    #run([wamp]) 
-
-    # CHECK DIRECTOR PROMPT
-    print(gemini_generate_text(build_director_prompt()))
-
-    # CHECK MATCHER PROMPT
-    print(gemini_generate_text(build_matcher_prompt("It is an animal that lives in the sea")))
