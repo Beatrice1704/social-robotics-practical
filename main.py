@@ -17,7 +17,9 @@ import re
 # GLOBAL VARIABLES
 
 ROUND_DURATION_S = 60.0
-MAX_MEMORY_TURNS = 8
+robot_is_speaking = False
+robot_is_director = True
+memory: list[str] = []
 
 # GEMINI SETUP
 
@@ -26,6 +28,8 @@ chatbot = genai.Client(api_key="api")
 def gemini_generate_text(prompt: str, model: str = "gemini-2.5-flash") -> str:
     resp = chatbot.models.generate_content(model=model, contents=prompt)
     return (resp.text or "").strip()
+
+
 
 
 exit_conditions = (":q", "quit", "exit")
@@ -64,11 +68,12 @@ def build_controller_prompt(role: str, memory: list[str], user_text: str) -> str
     LLM decides what to do (ask question, make guess, give clue, confirm correct).
     CODE handles timeout and role switching.
     """
-    mem = "\n".join(memory[-MAX_MEMORY_TURNS:]) if memory else "(none yet)"
+    mem = memory
     return f"""Context:
     You are a conversational assistant embedded in a small social robot.
     You are playing the WOW (With Other Words) spoken word game.
 
+    
     Role:
     {role}
 
@@ -96,17 +101,27 @@ def parse_say(text: str) -> str:
     m = re.search(r"SAY:\s*(.+)", text)
     return m.group(1).strip() if m else text.strip()
 
+def update_query() -> str:
+    global finish_dialogue, query
+    text = query.strip()
+    finish_dialogue = False
+    query = ""
+    t = text.strip().lower()
+    t = re.sub(r"[^\w:]+$", "", t)
+    return t
+
 @inlineCallbacks
 def main(session, details):
     global finish_dialogue, query, response
+    global robot_is_director, robot_is_speaking, memory
     # set language to English (use 'nl' for Dutch)
     yield session.call("rie.dialogue.config.language", lang="en")
     # let the robot stand up
     yield session.call("rom.optional.behavior.play",name="BlocklyStand")
 
-    # prompt from the robot to the user to say something
-    yield say(session, "Hi! Let's play With Other Words.")
-    yield say(session, "Each round lasts one minute. We take turns: I explain, then I guess.")
+
+
+    
 
     # setting up the automatic speech recognition
     # subscribes the asr function with the input stt stream
@@ -114,22 +129,60 @@ def main(session, details):
     # calls the stream. From here, the robot prints each 'final' sentence
     yield session.call("rie.dialogue.stt.stream")
 
+
+
+    
+    # prompt from the robot to the user to say something
+    yield say(session, "Hi! Let's play With Other Words.")
+    yield say(session, "Each round lasts one minute. Do you want to be the director or the matcher?")
+
+    user_response = query.strip().lower()
+    finish_dialogue = False
+    query = ""
+
+    if user_response == "matcher":
+        robot_is_director = True
+        yield say(session, "I will explain a word and you'll try to guess it.")
+        role = "DIRECTOR"
+    else:
+        robot_is_director = False
+        yield say(session, "You have to explain a word and I'll try to guess it.")
+        role = "MATCHER"
+    
+
+
     # loop while user did not say exit or quit
     dialogue = True
     while dialogue:
+        #wait for user
+        yield sleep(0.05)
+        user_response = update_query()
+        
         if (finish_dialogue):
             if query in exit_conditions:
                 dialogue = False
-                yield session.call("rie.dialogue.say","ok, I will leave you then")
+                yield say(session,"ok, I will leave you then")
                 break
             elif (query != ""):
                 response = chatbot.models.generate_content(
                     model="gemini-2.5-flash", contents=query)
-                yield session.call("rie.dialogue.say", response.text)
+                yield say(session, response.text)
+                #yield session.call("rie.dialogue.say", response.text)
+                #add to memory
             else:
-                yield session.call("rie.dialogue.say", text="sorry, what did you say?")
+                yield say(session, "sorry, what did you say?")
+
+            prompt = build_controller_prompt(role, memory, user_response)
+            llm_response = gemini_generate_text(prompt)
+            robot_response = parse_say(llm_response)
+            yield say(session, robot_response)
             finish_dialogue = False
             query = ""
+
+
+
+    # clear memory!
+
 
     # before leaving the program, we need to close the STT stream
     yield session.call("rie.dialogue.stt.close")
@@ -145,7 +198,7 @@ wamp = Component(
         "serializers": ["msgpack"],
         "max_retries": 0
     }],
-    realm="rie.69846cbd8e17491bb13c9abb",
+    realm="rie.6989b329946951d690d12711",
 )
 
 wamp.on_join(main)
