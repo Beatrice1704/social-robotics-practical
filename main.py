@@ -117,7 +117,7 @@ def parse_say(text: str) -> str:
 def update_query() -> str:
     global finish_dialogue, query
     text = query.strip()
-    finish_dialogue = False # 
+    finish_dialogue = False
     query = ""
     t = text.strip().lower()
     t = re.sub(r"[^\w:]+$", "", t)
@@ -141,8 +141,8 @@ def main(session, details):
 
     # prompt from the robot to the user to say something
     yield say(session, "Hi! Let's play With Other Words.")
-    yield say(session, "Each round lasts one minute."
-              "Do you want to be the director or the matcher?")
+    yield say(session, "Each round lasts one minute")
+    yield say(session, "Do you want to be the director or the matcher?")
 
     while not finish_dialogue:
         yield sleep(0.05)
@@ -151,7 +151,7 @@ def main(session, details):
     if user_response == "matcher":
         robot_is_director = True
         yield say(session, "I will explain a word and you'll try to guess it.")
-    else:
+    if "director" in user_response:
         robot_is_director = False
         yield say(
             session, "You have to explain a word and I'll try to guess it.")
@@ -208,7 +208,7 @@ wamp = Component(
         "serializers": ["msgpack"],
         "max_retries": 0
     }],
-    realm="rie.6989b329946951d690d12711",
+    realm="rie.698d8be5946951d690d13ad6",
 )
 
 wamp.on_join(main)
