@@ -6,6 +6,7 @@ from google import genai
 from google.genai import types
 import os
 import re
+import random
 
 # This demo is a very straightforward implementation of a text-based chatbot using google's
 # generative AI, Gemini
@@ -60,6 +61,14 @@ def say(session, text: str, cooldown_s: float = 0.8):
     """
     global robot_is_speaking
     robot_is_speaking = True
+    behaviors = ["BlocklyStand", "BlocklyDab", "BlocklyRightArmForward", "BlocklyLeftArmForward"
+    ]
+    try:
+        if random.random() < 0.7:  # not every time, keep it natural
+            yield session.call("rom.optional.behavior.play", name=random.choice(behaviors))
+            yield sleep(random.uniform(0.1, 0.3))
+    except Exception:
+        pass
     yield session.call("rie.dialogue.say", text=text)
     yield sleep(cooldown_s)
     robot_is_speaking = False
@@ -98,6 +107,7 @@ def build_controller_prompt(role: str, memory: list[
 
     Output format (MUST follow exactly):
     SAY: <one short sentence to speak aloud>
+    WORD_IS_GUESSED: <yes/no>
     """
 
 
@@ -112,6 +122,11 @@ def parse_say(text: str) -> str:
     """
     m = re.search(r"SAY:\s*(.+)", text)
     return m.group(1).strip() if m else text.strip()
+
+
+def parse_word_is_guessed(text: str) -> bool:
+    m = re.search(r"WORD_IS_GUESSED:\s*(yes|no)", text, re.IGNORECASE)
+    return (m.group(1).lower() == "yes") if m else False
 
 
 def update_query() -> str:
@@ -185,12 +200,36 @@ def main(session, details):
 
                 prompt = build_controller_prompt(role, memory, user_response)
                 llm_response = gemini_generate_text(prompt)
+                word_is_guessed = parse_word_is_guessed(llm_response)
+
                 robot_response = parse_say(llm_response)
                 yield say(session, robot_response)
+                yield sleep(0.05)
 
                 memory_add(memory, "ROBOT", robot_response)
+
+                if word_is_guessed:
+                    yield say(session, "Nice! Do you want to play another round?")
+                    yield sleep(0.05)
+
+                    # wait for yes/no
+                    while not finish_dialogue:
+                        yield sleep(0.05)
+                    ans = update_query()
+
+                    if ans in ("yes", "yeah", "yep", "sure", "ok", "okay"):
+                        robot_is_director = not robot_is_director  # swap roles
+                        memory.clear()
+                        round_start = reactor.seconds()
+                        yield say(session, "Great! New round.")
+                        yield sleep(0.05)
+                        continue
+                    else:
+                        yield say(session, "Okay, goodbye!")
+                        break
             else:
                 yield say(session, "sorry, what did you say?")
+                yield sleep(0.05)
 
     # before leaving the program, we need to close the STT stream
     yield session.call("rie.dialogue.stt.close")
