@@ -78,7 +78,6 @@ def build_controller_prompt(role: str, memory: list[
     One prompt that controls the game turn.
     LLM decides what to do (ask question, make guess, give clue,
     confirm correct).
-    CODE handles timeout and role switching.
     """
     mem = "\n".join(memory) if memory else ""
     return f"""Context:
