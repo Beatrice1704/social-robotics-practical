@@ -21,6 +21,9 @@ memory: list[str] = []
 
 
 def gemini_generate_text(prompt: str, model: str = "gemini-2.5-flash") -> str:
+    """
+    Gemini generation wrapper function.
+    """
     resp = chatbot.models.generate_content(model=model, contents=prompt)
     return (resp.text or "").strip()
 
@@ -32,6 +35,9 @@ response = "qqq"
 
 
 def asr(frames):
+    """
+    Automatic speech recognition.
+    """
     global finish_dialogue
     global query, robot_is_speaking
 
@@ -71,13 +77,9 @@ def say(session, text: str, cooldown_s: float = 0.8):
     robot_is_speaking = False
 
 
-def build_controller_prompt(role: str, memory: list[
-    str], user_text: str
-) -> str:
+def build_controller_prompt(role: str, memory: list[str], user_text: str) -> str:
     """
-    One prompt that controls the game turn.
-    LLM decides what to do (ask question, make guess, give clue,
-    confirm correct).
+    Builds the prompt that controls the game turn.
     """
     mem = "\n".join(memory) if memory else ""
     return f"""Context:
@@ -110,6 +112,9 @@ def build_controller_prompt(role: str, memory: list[
 
 
 def memory_add(mem: list[str], who: str, text: str):
+    """
+    Add memory of speaker sentence or LLM response.
+    """
     if text.strip():
         mem.append(f"{who}: {text.strip()}")
 
@@ -123,11 +128,17 @@ def parse_say(text: str) -> str:
 
 
 def parse_word_is_guessed(text: str) -> bool:
+    """
+    Extract whether the word is guessed or not.
+    """
     line = re.search(r"WORD_IS_GUESSED:\s*(yes|no)", text, re.IGNORECASE)
     return (line.group(1).lower() == "yes") if line else False
 
 
 def update_query() -> str:
+    """
+    Update speaker response picked up by the speech recognition module.
+    """
     global finish_dialogue, query
     text = query.strip()
     finish_dialogue = False
@@ -210,7 +221,7 @@ def main(session, details):
                 memory_add(memory, "ROBOT", robot_response)
 
                 if word_is_guessed:
-                    yield say(session, "Nice! Do you want to play another round")
+                    yield say(session, "Nice! Do you want to play another round?")
                     yield sleep(0.08)
 
                     # wait for yes/no
