@@ -1,12 +1,10 @@
 from autobahn.twisted.component import Component, run
 from twisted.internet.defer import inlineCallbacks
 from autobahn.twisted.util import sleep
-from twisted.internet import reactor #!!!!!!!!!!
+from twisted.internet import reactor
 from google import genai
-from google.genai import types
-import os
 import re
-import random
+from alpha_mini_rug import perform_movement
 
 # This demo is a very straightforward implementation of a text-based chatbot using google's
 # generative AI, Gemini
@@ -14,24 +12,17 @@ import random
 # Learn more at https://ai.google.dev/gemini-api
 
 # Setting the API KEY
-#chatbot = genai.Client(api_key=os.environ["api"])
-
-# GLOBAL VARIABLES
+chatbot = genai.Client(api_key="api_key")
 
 ROUND_DURATION_S = 60.0
 robot_is_speaking = False
 robot_is_director = True
 memory: list[str] = []
 
-# GEMINI SETUP
-
-chatbot = genai.Client(api_key="api")
-
 
 def gemini_generate_text(prompt: str, model: str = "gemini-2.5-flash") -> str:
     resp = chatbot.models.generate_content(model=model, contents=prompt)
     return (resp.text or "").strip()
-
 
 exit_conditions = (":q", "quit", "exit")
 
@@ -61,12 +52,18 @@ def say(session, text: str, cooldown_s: float = 0.8):
     """
     global robot_is_speaking
     robot_is_speaking = True
-    behaviors = ["BlocklyStand", "BlocklyDab", "BlocklyRightArmForward", "BlocklyLeftArmForward"
-    ]
+
     try:
-        if random.random() < 0.7:  # not every time, keep it natural
-            yield session.call("rom.optional.behavior.play", name=random.choice(behaviors))
-            yield sleep(random.uniform(0.1, 0.3))
+        yield perform_movement(
+            session,
+            frames=[
+                {"time": 400,  "data": {"body.head.pitch": 0.1}},
+                {"time": 1200, "data": {"body.head.pitch": -0.1}},
+                {"time": 2000, "data": {"body.head.pitch": 0.1}},
+                {"time": 2400, "data": {"body.head.pitch": 0.0}},
+            ],
+            force=True,
+        )
     except Exception:
         pass
     yield session.call("rie.dialogue.say", text=text)
@@ -99,6 +96,8 @@ def build_controller_prompt(role: str, memory: list[
     - MATCHER: The user has a secret word and describes it. Ask ONE short clarification question if unsure,
     otherwise make ONE guess. Keep it brief for speech.
 
+    If the word has been guessed correctly (by either side), set output WORD_IS_GUESSED: yes, otherwise set it to no.
+
     Conversation so far:
     {mem}
 
@@ -120,13 +119,13 @@ def parse_say(text: str) -> str:
     """
     Extract the SAY line.
     """
-    m = re.search(r"SAY:\s*(.+)", text)
-    return m.group(1).strip() if m else text.strip()
+    line = re.search(r"SAY:\s*(.+)", text)
+    return line.group(1).strip() if line else text.strip()
 
 
 def parse_word_is_guessed(text: str) -> bool:
-    m = re.search(r"WORD_IS_GUESSED:\s*(yes|no)", text, re.IGNORECASE)
-    return (m.group(1).lower() == "yes") if m else False
+    line = re.search(r"WORD_IS_GUESSED:\s*(yes|no)", text, re.IGNORECASE)
+    return (line.group(1).lower() == "yes") if line else False
 
 
 def update_query() -> str:
@@ -163,13 +162,15 @@ def main(session, details):
         yield sleep(0.05)
     user_response = update_query()
 
-    if user_response == "matcher":
+    if "matcher" in user_response:
         robot_is_director = True
-        yield say(session, "I will explain a word and you'll try to guess it.")
+        yield say(session, "I will explain a word and you'll try to guess it")
+        yield sleep(0.05)
     if "director" in user_response:
         robot_is_director = False
         yield say(
-            session, "You have to explain a word and I'll try to guess it.")
+            session, "You have to explain a word and I'll try to guess it")
+        yield sleep(0.05)
 
     # start round with clear memory and start timer
     memory.clear()
@@ -180,6 +181,7 @@ def main(session, details):
     while dialogue:
         yield sleep(0.05)
 
+        # if the round is longer than 60 sec, terminate round
         if reactor.seconds() - round_start >= ROUND_DURATION_S:
             yield say(session, "Time is up!")
             robot_is_director = not robot_is_director
@@ -204,17 +206,17 @@ def main(session, details):
 
                 robot_response = parse_say(llm_response)
                 yield say(session, robot_response)
-                yield sleep(0.05)
+                yield sleep(0.08)
 
                 memory_add(memory, "ROBOT", robot_response)
 
                 if word_is_guessed:
-                    yield say(session, "Nice! Do you want to play another round?")
-                    yield sleep(0.05)
+                    yield say(session, "Nice! Do you want to play another round")
+                    yield sleep(0.08)
 
                     # wait for yes/no
                     while not finish_dialogue:
-                        yield sleep(0.05)
+                        yield sleep(0.08)
                     ans = update_query()
 
                     if ans in ("yes", "yeah", "yep", "sure", "ok", "okay"):
