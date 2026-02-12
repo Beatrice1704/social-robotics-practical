@@ -117,7 +117,7 @@ def parse_say(text: str) -> str:
 def update_query() -> str:
     global finish_dialogue, query
     text = query.strip()
-    finish_dialogue = False
+    finish_dialogue = False # 
     query = ""
     t = text.strip().lower()
     t = re.sub(r"[^\w:]+$", "", t)
